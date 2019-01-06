@@ -1,0 +1,291 @@
+<html>
+	<head>
+		<title>Ryan Sloan | A Year in Books</title>
+		<script src="https://d3js.org/d3.v5.min.js"></script>
+		<style>
+		body {
+			font-family:sans-serif;
+			font-size:16px;
+			background:#f1f1f1;
+		}
+		#main-body {
+			display:inline-block;
+		}
+		#sidebar {
+			display:inline-block;
+			vertical-align:top;
+			margin-top:40px;
+		}
+		.stat-tile {
+			margin-bottom:4px;
+			min-height:128px;
+			min-width:128px;
+			background:#330066;
+			color:#ffffff;
+			font-size:24px;
+			text-align:center;
+			padding:12px;
+			display:inline-block;
+
+		}
+		.stat-tile .counter {
+			display:block;
+			font-size:52px;
+			padding:8px;
+		}
+		.long-tile {
+			display:block;
+			min-width:280px;
+		}
+		#rating_dist_plot,#tooltip {
+			font-size:12px;
+		}
+		#disagreement_plot {
+			width:400px;
+			height:220px
+		}
+		#month_counts_plot {
+			height:280px;
+			width:400px;
+		}
+		#month_counts_plot circle {
+			fill: #d19d00;
+		}
+		#page_count_path {
+			fill:transparent;
+  			stroke: #d19d00;
+  			stroke-width: 4px;
+  			z-index: 10000;
+  		}
+  		#shelf_distribution_plot {
+			height:280px;
+			width:400px;
+		}
+		p {
+			max-width:680px;
+		}
+	</style>
+	</head>
+	<body>
+		<h1><span class='year-text'></span>: A Year in Books</h1>
+		<p>I love to read, and for the last few years, I have obsessively tracked my reading using Goodreads. Goodreads offers a data export feature, so I thougth I would export my data and build some visualizations. Want to create your own? <a href="#">Check out the source on GitHub.</a></p>
+		<p>Curious about my literary highlights for <span class='year-text'></span>? Check out my <a href='#' id='books-blog-link'><span class='year-text'></span> Books of the Year blog post</a> to read about my top 3 books of the year.</p>
+		<div id='main-body'>
+		<h2>My Rating Distribution</h2>
+		<p>Here are my ratings for the year, from 1 to 5 stars. I did not dole out any one-star ratings (the lowest score on Goodreads) this year. Selection bias plays a big role here - I'm unlikely to read a book that I end up truly disliking. How do I know ahead of time? I'm not sure, but maybe I am judging some books by their cover...</p><p style='font-size:12px'>(I borrowed the idea for a plot using cover images from the Goodreads stats page. Check it out!)</p>
+		<div id='rating_dist_plot'></div>
+		<h2>Bucking the Trend: Where My Ratings Differed</h2>
+		<p>This graphic shows the difference between my rating for a book and the average community rating. Each point's vertical position corresponds to my rating for that book. Each point's horizontal position corresponds to the average community rating for the book. The dotted line is the "perfect match" line (where my rating matched the average). Points above the line are books that I rated higher than the average rater, and points that fall below the line are books I rated lower than average. It seems that, in general, I'm tougher to please than my fellow readers.</p>
+		<svg id='disagreement_plot'></svg>
+		<h2>Activity By Month</h2>
+		<p>The bars represent the number of books I read each month, and the line is the number of pages. You can see that this year, I didn't do as much reading in the latter half of the year as in the beginning. That was when things got busiest at work, so I'm not too surprised! </p>
+		<p>Page counts are based on the numbers provided by Goodreads, which includes things like indexes and other end matter. So while I believe in the page trends, I don't put much stock in the precise numbers.</p>
+		<svg id='month_counts_plot'><path id='page_count_path'></path></svg>
+		<h2>Top Topics for <span class='year-text'></span></h2>
+		<p>My reading was very politics-heavy for the second year in a row. A sign of the time, I guess. I also read quite a bit of history, and more fiction than usual, too! I joined a Science Fiction book club this year, which accounts for most of the fiction, but I also reread some classics this year (<i>The Great Gatsby</i> and <i>Things Fall Apart</i>). Books can be on multiple shelves, so these numbers add up to more than <span class='book-count-text'></span>.</p>
+		<svg id='shelf_distribution_plot'></svg>
+		<div id='tooltip' style='position:absolute;z-index:100;top:150px;left:100px;background:#444444;color:#ffffff;padding:4px;visibility:hidden'></div>
+	</div>
+	<div id='sidebar'>
+		<div class='stat-tile'><div>I read <span class='book-count-text counter'>0</span> books</div></div>
+		<div class='stat-tile'><div>Avg. Rating <span class='avg-rating-text counter'>0</span> stars</div></div>
+		<div class='stat-tile long-tile'><div>Most read category: <span id='top-category-text' class='counter'>technology</span> <span id='top-category-count'>10 books</span></div></div>
+	</div>
+	</body>
+	<script>
+		var all_books;
+		//This is used to setup things for the year, eventually will use this with a year switcher.
+  		function updateSummaryStatsForYear(y) {
+			d3.selectAll(".year-text").text(y);
+			d3.select("#books-blog-link").attr("href","http://ryanjsloan.com/"+y+"/"+y+"-books");
+			d3.json(y+"_books.json").then(function(books){
+
+		var rating_groups = [[],[],[],[],[]];
+		var month_counts = [0,0,0,0,0,0,0,0,0,0,0,0];
+		var month_pages = [0,0,0,0,0,0,0,0,0,0,0,0];
+		var shelf_counts = {};
+		var MONTH_NAMES=["January","February","March","April","May","June","July","August","September","October","November","December"];
+		var img_src_replace ="http://covers.openlibrary.org/b/isbn/080701429X-S.jpg";
+		var rating_accumulator = 0
+		var svg = d3.select("svg");
+		//Perform aggregation for some data points. Probably a fancier d3-idiomatic way to do this.
+  		for (var i=0;i<books.length;i++) {
+  			rating_groups[books[i].rating - 1].push(books[i]);
+  			month_counts[books[i]["month"] - 1] += 1;
+  			month_pages[books[i]["month"] - 1] += books[i]["pages"];
+  			books[i]["shelves"].split(", ").forEach(function(s) {
+  				if (s in shelf_counts) {
+	  				shelf_counts[s]+=1;
+	  			} else { shelf_counts[s]=1;}
+  			});
+  			
+  		}
+  		//scales used in various plots. This needs to happen after ^
+  		//preprocessing, because monthly metrics are used.
+  		var delta_scale = d3.scaleLinear()
+    		.domain([-3,2])
+    		.range([20,380]);
+    	var rating_scale = d3.scaleLinear()
+    		.domain([2,5])
+    		.range([10,390]);
+    	var inverse_rating_scale = d3.scaleLinear()
+    		.domain([5,2])
+    		.range([10,200]);
+    	var month_scale = d3.scaleLinear()
+    		.domain([0,11])
+    		.range([10,360]);
+    	var pages_scale = d3.scaleLinear()
+    		.domain([0,d3.max(month_pages)*1.1])
+    		.range([180,0]);
+    	var monthly_bar_scale_top = d3.scaleLinear()
+    		.domain([0,d3.max(month_counts)+1])
+    		.range([180,0]);
+    	//Plot rating distributions
+
+  		var rating_dist_plot=d3.select("#rating_dist_plot");
+  		rating_dist_plot.selectAll("div").remove();
+  		for (var i=rating_groups.length-1;i>=0;i--) {
+  			rating_accumulator+=(i+1)*rating_groups[i].length;
+  			var rating_div = rating_dist_plot.append("div").style("padding","4px").style("height","40px");
+  			rating_div.append("div").text((i+1)+" stars").style("vertical-align","top").style("display","inline-block").style("margin-top","16px").style("margin-right","4px");
+  			rating_div.selectAll("img").data(rating_groups[i]).enter().append("img").attr("src",function(d,i) {return d.thumb;}).style("margin-right","4px").style("width","28px").attr("alt",function (d,i) { return d["title"]})
+  			.on("mouseover",function(d,i) { 
+  					d3.select("#tooltip").style("visibility","visible")
+  					.html(d["title"]+"<br />By "+d["author"])
+  					.style("left", (d3.event.pageX) + "px")
+  					.style("top", (d3.event.pageY - 8) + "px")
+  					.transition()
+                	.duration(50)
+                	.style("opacity", .9);
+
+  				})
+  			.on("mouseout", hideTooltip);
+  			if (rating_groups[i].length==0) {
+  				rating_div.insert("span").text("no books").style("vertical-align","top").style("display","inline-block").style("margin-top","12px").style("margin-right","4px").style("color","#777777").style("font-style","italic");
+  			}
+  		}
+  		d3.selectAll(".avg-rating-text").text(Math.round(rating_accumulator/books.length*100)/100);
+  		d3.selectAll(".book-count-text").text(books.length);
+    	//My ratings vs. average ratings
+    	//First, plot 1:1 line
+    	d3.select("#disagreement_plot").insert("line").attr("x1",rating_scale(2.2)).attr("x2",rating_scale(5)).attr("y1",inverse_rating_scale(2.2)).attr("y2",inverse_rating_scale(5)).style("stroke","#262626").style("stroke-width",2).style("line-style","dashed").attr("stroke-dasharray","5,5");
+		//clean up old points if they exist. todo: fix this to idiomatic d3 method.
+    	d3.select("#disagreement_plot").selectAll("circle").remove();
+  		d3.select("#disagreement_plot").selectAll("circle").data(books).enter().insert("circle").style("r","4px")
+  			.style("cy",function(d,i) { 
+  				return inverse_rating_scale(d["rating"]);
+  			})
+  			.style("fill","#330066")
+  			.style("cx",function (d,i) {   
+  				return rating_scale(d["avg_rating"]);
+  			})
+  			.on("mouseover",function(d,i) { 
+  				d3.select("#tooltip")
+  					.style("visibility","visible")
+  					.html(d["title"]+"<br />By "+d["author"]+"<br />My rating: "+d["rating"]+"<br />Average: "+d["avg_rating"])
+  					.style("left", (d3.event.pageX+8) + "px")
+  					.style("top", (d3.event.pageY - 8) + "px")
+  					.transition()
+                	.duration(50)
+                	.style("opacity", 1);
+             })
+  			 .on("mouseout", hideTooltip);
+  		//All these labels are hacky, todo cleanup
+  		d3.select("#disagreement_plot").insert("text").attr("x",rating_scale(4)).attr("y",inverse_rating_scale(2.2)).text("Overrated");
+  		d3.select("#disagreement_plot").insert("text").attr("x",rating_scale(2.5)).attr("y",inverse_rating_scale(4.9)).text("Underrated");
+  		d3.select("#disagreement_plot").insert("text").attr("x",rating_scale(2.5)).attr("y",inverse_rating_scale(4.9)).text("Underrated");
+		d3.select("#disagreement_plot").insert("text").attr("x",rating_scale(2)).attr("y",inverse_rating_scale(3)).text("My Rating")
+			.attr("transform","rotate(-90,"+rating_scale(2)+","+inverse_rating_scale(3)+")")
+			.style("fill","#777777")
+			.style("font-size","12px");
+		d3.select("#disagreement_plot").insert("text").attr("x",120).attr("y",216).text("Average Rating")
+			.style("fill","#777777")
+			.style("font-size","12px");
+
+		//Monthly book and page counts
+		//clean up old points if they exist. todo: fix this to idiomatic d3 method.
+		d3.select("#month_counts_plot").selectAll("rect").remove();
+  		d3.select("#month_counts_plot").selectAll("rect").data(month_counts).enter().insert("rect")
+  			.style("y",function(d,i) { 
+  				return monthly_bar_scale_top(d);//400-d*20;
+  			})
+  			.style("fill","#330066")
+  			.style("x",function (d,i) {   
+  				return month_scale(i);
+  			}).style("width","30")
+  			.style("height",function(d,i) { return 180-monthly_bar_scale_top(d); })
+  			.on("mouseover",function(d,i) { 
+  				d3.select("#tooltip").style("visibility","visible")
+  					.html(MONTH_NAMES[i]+"<br />"+d+(d!=1 ? " books" : " book")+"<br />"+month_pages[i]+" pages")
+  					.style("left", (d3.event.pageX) + "px")
+  					.style("top", (d3.event.pageY - 8) + "px")
+  			  		.transition()
+                	.duration(50)
+                	.style("opacity", .9);
+                })
+  			.on("mouseout",hideTooltip);
+  		//remove the page count line so that it's z-order remains correct (needed for switching year and rebuilding plot)
+  		d3.select("#page_count_path").remove();
+  		d3.select("#month_counts_plot").insert("path").attr("id","page_count_path").attr("d",function() {
+  			var path_description=""
+  			month_pages.forEach(function(p,i) {
+  				if (i==0) {
+  					path_description+="M "+(month_scale(i)+15)+" "+pages_scale(p)
+  				}
+  				else {
+  					path_description+="L "+(month_scale(i)+15)+" "+pages_scale(p)
+  				}
+  			});
+  			return path_description;
+  		});
+  		//Plot monthly page count data points.
+  		//clean up old points if they exist. todo: fix this to idiomatic d3 method.
+		d3.select("#month_counts_plot").selectAll("circle").remove();
+		d3.select("#month_counts_plot").selectAll("circle").data(month_pages).enter().insert("circle")
+			.style("cx",function(d,i) { return month_scale(i)+15;})
+			.style("cy",function(d,i) { return pages_scale(d);})
+			.style("r","4px");
+		d3.select("#month_counts_plot").selectAll("text").data(MONTH_NAMES).enter().insert("text")
+			.attr("x",function(d,i) { return month_scale(i)+15;})
+			.attr("y",function(d,i) { return 188;})
+			.attr("transform",function (d,i) { return "rotate(-90,"+(month_scale(i)+15)+",188)";})
+			.style("font-size","12px")
+			.style("text-anchor","end")
+			.style("fill","#262626").text(function(d,i) { return d; });
+		
+		//update shelf information
+		d3.select("#shelf_distribution_plot").selectAll("rect").remove();
+		d3.select("#shelf_distribution_plot").selectAll("text").remove();
+		var top_shelf="NONE";
+		var top_shelf_count=0;
+		var i=0;
+		for (shelf in shelf_counts) {
+			if (shelf_counts[shelf]>top_shelf_count) {
+				top_shelf = shelf;
+				top_shelf_count=shelf_counts[shelf];
+			}
+			d3.select("#shelf_distribution_plot").insert("rect")
+				.attr("y",20*i++).attr("x",0)
+				.attr("width",shelf_counts[shelf]*10)
+				.attr("height",20)
+				.style("fill","#330066");
+			d3.select("#shelf_distribution_plot").insert("text")
+				.attr("y",20*i-4).attr("x",2)
+				.style("fill","#ffffff").text(shelf_counts[shelf])
+				.style("font-size","13px");
+			d3.select("#shelf_distribution_plot").insert("text")
+				.attr("y",20*i-4).attr("x",shelf_counts[shelf]*10+4)
+				.style("fill","#330066").text(shelf)
+		}
+		d3.select("#top-category-text").text(top_shelf);
+		d3.select("#top-category-count").text("with " + top_shelf_count + " books");
+	});
+  		}
+  		function hideTooltip() {
+          		d3.select("#tooltip").transition()
+                .duration(400)
+                .style("opacity", 0);
+  		}
+		updateSummaryStatsForYear(2018);
+	</script>
+</html>
